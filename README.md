@@ -1,9 +1,28 @@
 # npm-threat-observatory
 
-本项目是一个本地 PoC，用来分析 npm 包在安装期和运行期是否出现可疑行为。当前仓库按 **Podman 优先，Docker 兼容** 的方式组织，系统提供上传归档、registry 包和本地样本三种分析来源，并提供两种检测模式：
+一个面向 **npm 投毒检测（package poisoning）** 和 **供应链安全分析** 的本地 PoC 平台。
+
+本项目聚焦 npm 包在 **安装期** 与 **运行期** 的高风险行为，例如：
+- 生命周期脚本中的下载执行
+- 可疑外联与 beacon 行为
+- 敏感凭据读取
+- 子进程 / shell 派生
+- 上传恶意归档后的受控沙箱分析
+
+当前仓库按 **Podman 优先，Docker 兼容** 的方式组织，系统支持上传归档、registry 包和本地样本三种分析来源，并提供两种检测模式：
 
 - `portable`：适合 mac 本机，通过命令包装器和 Node hook 采集高风险行为
 - `falco`：适合 Linux VM，通过 `Falco + modern eBPF` 获取更强的容器行为观测
+
+## Why
+
+很多 npm 供应链攻击并不是传统意义上的“漏洞利用”，而是通过：
+- 恶意 `postinstall` / `preinstall` 脚本
+- 被投毒的依赖包或 typosquatting 包
+- 运行时偷偷外联、回传环境信息或窃取凭据
+- 下载第二阶段 payload 再执行
+
+这个项目的目标，就是把这些行为放进一个受控分析环境里，给出结构化的任务结果、事件时间线和风险结论。
 
 ## Components
 
@@ -13,6 +32,111 @@
 - `falco` / `falcosidekick`: Linux 模式下捕获容器行为并推送告警
 - `verdaccio`: 本地 npm 代理
 - `db`: 保存分析任务、容器映射、告警事件
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U["Analyst / Researcher"] --> UI["Task Center UI<br/>FastAPI + Static Frontend"]
+    UI --> API["control-api"]
+    API --> DB[("PostgreSQL")]
+    API --> W["worker"]
+    API --> S["/analyses/upload"]
+
+    S --> A1["Upload Staging<br/>zip/tgz validation"]
+    A1 --> V["Shared Artifacts Volume"]
+
+    W --> C["Analyzer Container"]
+    V --> C
+    C --> E1["Portable Hooks<br/>child_process / fs / net"]
+    C --> E2["Falco + eBPF<br/>(Linux mode)"]
+
+    E1 --> API
+    E2 --> F["falcosidekick"]
+    F --> API
+
+    API --> R["Task Result<br/>verdict / risk / timeline"]
+    R --> UI
+```
+
+这个架构的核心思想是：
+- `control-api` 负责任务入口、事件归并和结果输出
+- `worker` 负责拉起一次性 analyzer 容器
+- 上传包先经过受控解包和校验，再以只读方式挂进 analyzer
+- 行为事件来自两条链路：
+  - `portable`：命令包装器 + Node hook
+  - `falco`：Linux VM 下的内核级容器观测
+
+## Detection Scope
+
+当前 PoC 重点覆盖：
+- npm 包投毒检测
+- 安装期生命周期脚本行为分析
+- 运行期外联与进程行为分析
+- 上传归档的离线 / 最小联网沙箱检测
+- Linux 场景下的 Falco/eBPF 容器观测
+
+## Demo Walkthrough
+
+下面这条演示链路适合给开源读者快速理解“这个项目到底能看到什么”：
+
+### 1. 启动任务中心
+
+```bash
+export CONTROL_API_HOST_PORT=18000
+podman compose build analyzer control-api worker
+podman compose up -d
+open http://localhost:18000
+```
+
+启动后你会看到：
+- 左侧：任务列表
+- 中间：任务结果、风险等级、时间线
+- 右侧：新建任务，支持 `registry` / `sample` / `upload`
+
+### 2. 跑一个 benign 基线任务
+
+在页面中选择：
+- `Source Type`: `Sample Template`
+- `Sample`: `Benign Baseline`
+- `Egress Policy`: `Offline`
+
+预期结果：
+- 状态会从 `queued -> running_install -> running_runtime -> completed`
+- verdict 通常是 `clean`
+- 时间线很少或没有高危事件
+
+### 3. 跑一个安装期投毒样本
+
+在页面中选择：
+- `Source Type`: `Sample Template`
+- `Sample`: `Malicious Postinstall`
+- `Egress Policy`: `Offline`
+
+预期结果：
+- 任务会记录 shell / 网络 / 下载执行相关行为
+- 因为是 `offline`，外联会被阻断并写入事件
+- verdict 应趋向 `suspicious` 或 `malicious`
+
+### 4. 上传一个本地恶意归档
+
+在页面中选择：
+- `Source Type`: `Upload Package`
+- 选择一个 `.tgz` / `.zip`
+- `Egress Policy`: `Offline` 或 `Registry Only`
+
+预期差异：
+- `offline`：适合高风险样本，重点看“尝试行为”和阻断记录
+- `registry_only`：适合复现更真实的安装期依赖拉取，但仍会阻断非白名单公网访问
+
+### 5. 结果页应该重点看什么
+
+任务结果页重点看这几列信号：
+- `source`: 这是 `registry`、`sample` 还是 `upload`
+- `egress`: 这是离线检测结论还是最小联网结论
+- `verdict`: `clean` / `suspicious` / `malicious` / `failed`
+- `Matched Security Events`: 命中了哪些规则，发生在 install 还是 runtime
+- `Execution Error`: 如果任务失败，会先显示执行错误而不是误报成 `clean`
 
 ## Quick Start
 
