@@ -1,0 +1,146 @@
+services:
+  analyzer:
+    profiles: ["build"]
+    image: localhost/npm-security-check/analyzer:latest
+    build:
+      context: .
+      dockerfile: docker/analyzer.Dockerfile
+    command: ["sleep", "infinity"]
+    networks:
+      - analysis-net
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: npm_security_check
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d npm_security_check"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "${DB_HOST_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - backend
+
+  control-api:
+    build:
+      context: .
+      dockerfile: docker/control-api.Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/npm_security_check
+      DOCKER_BASE_URL: unix://var/run/docker.sock
+      DEFAULT_REGISTRY_URL: http://verdaccio:4873
+      DETECTION_BACKEND: ${DETECTION_BACKEND:-portable}
+      WORK_ROOT: /var/lib/npm-security-check
+    ports:
+      - "${CONTROL_API_HOST_PORT:-8000}:8000"
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      verdaccio:
+        condition: service_started
+    volumes:
+      - ${CONTAINER_SOCKET_PATH:-/var/run/docker.sock}:/var/run/docker.sock:z
+      - analysis-artifacts:/var/lib/npm-security-check
+    security_opt:
+      - label=disable
+    networks:
+      - backend
+      - analysis-net
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/npm_security_check
+      DOCKER_BASE_URL: unix://var/run/docker.sock
+      DEFAULT_REGISTRY_URL: http://verdaccio:4873
+      ANALYZER_IMAGE: localhost/npm-security-check/analyzer:latest
+      ANALYSIS_NETWORK_NAME: analysis-net
+      CALLBACK_BASE_URL: http://control-api:8000
+      DETECTION_BACKEND: ${DETECTION_BACKEND:-portable}
+      WORK_ROOT: /var/lib/npm-security-check
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      verdaccio:
+        condition: service_started
+    volumes:
+      - ${CONTAINER_SOCKET_PATH:-/var/run/docker.sock}:/var/run/docker.sock:z
+      - analysis-artifacts:/var/lib/npm-security-check
+    security_opt:
+      - label=disable
+    networks:
+      - backend
+      - analysis-net
+
+  verdaccio:
+    image: verdaccio/verdaccio:5
+    ports:
+      - "${VERDACCIO_HOST_PORT:-4873}:4873"
+    networks:
+      - backend
+      - analysis-net
+
+  falco:
+    profiles: ["linux-falco"]
+    image: falcosecurity/falco-no-driver:latest
+    privileged: true
+    pid: host
+    environment:
+      FALCO_BPF_PROBE: ""
+    command:
+      - /usr/bin/falco
+      - --modern-bpf
+      - -r
+      - /etc/falco/falco_rules.yaml
+      - -r
+      - /etc/falco/rules.d
+      - -o
+      - http_output.enabled=true
+      - -o
+      - http_output.url=http://falcosidekick:2801/
+      - -o
+      - json_output=true
+    volumes:
+      - ${CONTAINER_SOCKET_PATH:-/var/run/docker.sock}:/host/var/run/docker.sock:z
+      - /proc:/host/proc:ro
+      - /boot:/host/boot:ro
+      - /lib/modules:/host/lib/modules:ro
+      - /usr:/host/usr:ro
+      - ./falco/rules:/etc/falco/rules.d:ro
+    depends_on:
+      - falcosidekick
+    networks:
+      - backend
+      - analysis-net
+
+  falcosidekick:
+    profiles: ["linux-falco"]
+    image: falcosecurity/falcosidekick:latest
+    environment:
+      WEBHOOK_ADDRESS: http://control-api:8000/webhooks/falco
+      WEBHOOK_CUSTOMHEADERS: Content-Type:application/json
+    ports:
+      - "${FALCOSIDEKICK_HOST_PORT:-2801}:2801"
+    depends_on:
+      - control-api
+    networks:
+      - backend
+
+networks:
+  backend:
+  analysis-net:
+    name: analysis-net
+
+volumes:
+  postgres-data:
+  analysis-artifacts:

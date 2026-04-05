@@ -1,0 +1,34 @@
+- rule: npm lifecycle shell execution
+  desc: npm lifecycle script spawned a shell in an analysis container
+  condition: container and spawned_process and proc.name in (sh, bash, dash) and container.image.repository="npm-security-check/analyzer"
+  output: "npm lifecycle shell execution (analysis=%container.label.npm_security_check.analysis_id container=%container.id proc=%proc.cmdline parent=%proc.pcmdline)"
+  priority: WARNING
+  tags: [npm, install, runtime]
+
+- rule: npm suspicious network activity
+  desc: analysis container opened an outbound network connection
+  condition: container and outbound and container.image.repository="npm-security-check/analyzer"
+  output: "npm suspicious network activity (analysis=%container.label.npm_security_check.analysis_id container=%container.id proc=%proc.cmdline fd=%fd.name)"
+  priority: WARNING
+  tags: [npm, network]
+
+- rule: npm sensitive credential access
+  desc: analysis container read a common credential location
+  condition: container and open_read and container.image.repository="npm-security-check/analyzer" and fd.name pmatch (/root/.npmrc, /root/.ssh, /root/.aws, /root/.config/gcloud, /root/.git-credentials)
+  output: "npm sensitive credential access (analysis=%container.label.npm_security_check.analysis_id container=%container.id file=%fd.name proc=%proc.cmdline)"
+  priority: ERROR
+  tags: [npm, credentials]
+
+- rule: npm hidden persistence write
+  desc: analysis container wrote to a hidden or startup path
+  condition: container and open_write and container.image.repository="npm-security-check/analyzer" and fd.name pmatch (/root/.bashrc, /root/.profile, /etc/profile, /etc/cron.d, /tmp/.)
+  output: "npm hidden persistence write (analysis=%container.label.npm_security_check.analysis_id container=%container.id file=%fd.name proc=%proc.cmdline)"
+  priority: WARNING
+  tags: [npm, persistence]
+
+- rule: npm download and execute chain
+  desc: analysis container used curl or wget followed by a shell or chmod
+  condition: container and spawned_process and container.image.repository="npm-security-check/analyzer" and proc.cmdline contains "curl" or proc.cmdline contains "wget" or proc.cmdline contains "chmod +x"
+  output: "npm download and execute chain (analysis=%container.label.npm_security_check.analysis_id container=%container.id proc=%proc.cmdline)"
+  priority: ERROR
+  tags: [npm, execution]

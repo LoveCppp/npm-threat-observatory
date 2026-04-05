@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>npm Security Check</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <div class="orb orb-a"></div>
+      <div class="orb orb-b"></div>
+
+      <header class="topbar panel">
+        <div class="topbar-copy">
+          <p class="eyebrow">Task Center</p>
+          <h1>分析任务控制台</h1>
+          <p class="hero-text">
+            以任务为中心管理 npm 包分析。支持 registry、sample 和上传归档三种来源，并展示当前任务的
+            verdict、时间线、来源和联网策略。
+          </p>
+        </div>
+
+        <section class="health-card">
+          <div class="panel-title-row compact">
+            <span class="panel-title">Runtime Health</span>
+            <span id="health-badge" class="badge badge-neutral">Checking</span>
+          </div>
+          <dl class="health-grid">
+            <div>
+              <dt>Status</dt>
+              <dd id="health-status">-</dd>
+            </div>
+            <div>
+              <dt>Database</dt>
+              <dd id="health-db">-</dd>
+            </div>
+            <div>
+              <dt>Backend</dt>
+              <dd id="health-backend">-</dd>
+            </div>
+            <div>
+              <dt>Falco</dt>
+              <dd id="health-falco">-</dd>
+            </div>
+          </dl>
+        </section>
+      </header>
+
+      <main class="task-console">
+        <section class="panel task-panel">
+          <div class="panel-title-row">
+            <div>
+              <span class="panel-title">Analysis Tasks</span>
+              <p class="panel-kicker">创建后立即进入列表，点击任意任务查看结果。</p>
+            </div>
+            <button id="refresh-list" class="ghost-button" type="button">Reload</button>
+          </div>
+          <div id="analysis-list" class="analysis-list"></div>
+        </section>
+
+        <section class="panel result-panel">
+          <div class="panel-title-row">
+            <div>
+              <span class="panel-title">Task Result</span>
+              <p class="panel-kicker">从左侧任务队列中选择一个任务查看详情。</p>
+            </div>
+            <span id="selected-analysis-id" class="mono subtle">No selection</span>
+          </div>
+
+          <div id="analysis-empty" class="empty-state">
+            <p>先创建一个分析任务，或者从左侧任务列表里选择已有任务。</p>
+          </div>
+
+          <div id="analysis-details" class="hidden">
+            <div class="spotlight-head">
+              <div>
+                <div class="analysis-heading-row">
+                  <h2 id="analysis-package">-</h2>
+                  <span id="analysis-source" class="badge badge-neutral">registry</span>
+                </div>
+                <p id="analysis-summary" class="summary-text">-</p>
+              </div>
+              <div id="analysis-verdict" class="verdict-card verdict-neutral">Awaiting</div>
+            </div>
+
+            <div class="meta-grid">
+              <div class="meta-card">
+                <span>Status</span>
+                <strong id="analysis-status">-</strong>
+              </div>
+              <div class="meta-card">
+                <span>Risk</span>
+                <strong id="analysis-risk">-</strong>
+              </div>
+              <div class="meta-card">
+                <span>Runtime</span>
+                <strong id="analysis-runtime">-</strong>
+              </div>
+              <div class="meta-card">
+                <span>Egress</span>
+                <strong id="analysis-egress">-</strong>
+              </div>
+              <div class="meta-card">
+                <span>Created</span>
+                <strong id="analysis-created">-</strong>
+              </div>
+              <div class="meta-card">
+                <span>Started</span>
+                <strong id="analysis-started">-</strong>
+              </div>
+              <div class="meta-card">
+                <span>Completed</span>
+                <strong id="analysis-completed">-</strong>
+              </div>
+            </div>
+
+            <div id="analysis-error-wrap" class="error-panel hidden">
+              <span class="panel-title">Execution Error</span>
+              <p id="analysis-error" class="error-text">-</p>
+            </div>
+
+            <div class="timeline-header">
+              <div>
+                <span class="panel-title">Matched Security Events</span>
+                <p class="panel-kicker">命中的行为规则与时间线。</p>
+              </div>
+              <button id="refresh-selected" class="ghost-button" type="button">Refresh</button>
+            </div>
+            <div id="events-list" class="events-list"></div>
+          </div>
+        </section>
+
+        <aside class="panel create-panel">
+          <div class="panel-title-row">
+            <div>
+              <span class="panel-title">New Task</span>
+              <p class="panel-kicker">支持 registry 包、本地样本模板和上传归档三种来源。</p>
+            </div>
+          </div>
+
+          <form id="analysis-form" class="analysis-form">
+            <label>
+              <span>Source Type</span>
+              <select id="source-type" name="source_type">
+                <option value="registry">Registry Package</option>
+                <option value="sample">Sample Template</option>
+                <option value="upload">Upload Package</option>
+              </select>
+            </label>
+
+            <div id="registry-fields" class="source-section">
+              <label>
+                <span>Package Name</span>
+                <input id="package-name" name="package_name" placeholder="left-pad" required />
+              </label>
+              <label>
+                <span>Version</span>
+                <input id="package-version" name="version" placeholder="1.3.0" required />
+              </label>
+              <label>
+                <span>Registry URL</span>
+                <input id="registry-url" name="registry_url" placeholder="Optional override" />
+              </label>
+            </div>
+
+            <div id="sample-fields" class="source-section hidden">
+              <div class="sample-strip-head">
+                <span class="panel-title">Sample Templates</span>
+                <span class="panel-kicker">点击选择一个本地 PoC 样本。</span>
+              </div>
+              <div id="sample-list" class="sample-list"></div>
+              <input id="sample-id" name="sample_id" type="hidden" />
+            </div>
+
+            <div id="upload-fields" class="source-section hidden">
+              <label>
+                <span>Package Archive</span>
+                <input id="package-file" name="file" type="file" accept=".tgz,.tar.gz,.zip" />
+              </label>
+              <p class="panel-kicker">支持 `.tgz`、`.tar.gz`、`.zip`，会在后端做路径穿越和符号链接校验。</p>
+            </div>
+
+            <label>
+              <span>Runtime Mode</span>
+              <select id="runtime-mode" name="runtime_mode">
+                <option value="require">require()</option>
+                <option value="none">Install only</option>
+              </select>
+            </label>
+
+            <label>
+              <span>Egress Policy</span>
+              <select id="egress-mode" name="egress_mode">
+                <option value="offline">Offline</option>
+                <option value="registry_only">Registry Only</option>
+              </select>
+            </label>
+
+            <div class="form-actions">
+              <button id="submit-button" type="submit">Create Task</button>
+              <span id="submit-status" class="form-status">Ready</span>
+            </div>
+          </form>
+        </aside>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+  </html>
